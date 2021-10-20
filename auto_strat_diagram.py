@@ -2,22 +2,31 @@ import requests
 import json
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+import datetime
 import textwrap
 from requests.auth import HTTPBasicAuth
 
 
-def get_call(api_url):
+def get_call(api_url, return_name):
     baseurl = 'https://idbs-hub.aha.io'
     apikey = '07a429f2762cf51a4a027024bda48652a4554ef856335a58629ad5d99653ef87'
     headers = {'accept': 'application/json',
                'contentType': 'application/json',
                'authorization': "Bearer {}".format(apikey)}
-    params = 'fields=name,workflow_status:name,custom_fields'
 
     resurl = baseurl + api_url
-    get_response = requests.get(resurl, headers=headers, params=params)
+    init_pages = []
 
-    return get_response.content
+    for pagination in range(1, 6): #Need to make the max range dynamic
+        params = 'fields=name,workflow_status:name,custom_fields&page=' + str(pagination)
+        get_response = requests.get(resurl, headers=headers, params=params)
+        json_data = get_response.json()
+        next_init_pages = json_data[return_name]
+
+        for i in next_init_pages:
+            init_pages.append(i)
+
+    return init_pages
 
 def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
     # create the roadmap
@@ -40,11 +49,11 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
     while x < init_loop:
 
         rel_name = ''
-        rel_date = datetime.strptime('2999-01-01', '%Y-%m-%d')
+        rel_date = datetime.datetime.strptime('2999-01-01', '%Y-%m-%d')
 
         for init in initiatives:
-            if rel_date > datetime.strptime(initiatives[init]['external_release_date'], '%Y-%m-%d'):
-                rel_date = datetime.strptime(initiatives[init]['external_release_date'], '%Y-%m-%d')
+            if rel_date > datetime.datetime.strptime(initiatives[init]['external_release_date'], '%Y-%m-%d'):
+                rel_date = datetime.datetime.strptime(initiatives[init]['external_release_date'], '%Y-%m-%d')
                 rel_name = init
 
         initiative_name = initiatives[rel_name]['name']
@@ -139,34 +148,67 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
 def poll_aha_goals():
     apiurl = '/api/v1/initiatives'
 
-    response = get_call(apiurl)
-    json_response = json.loads(response)
-
-    goals = json_response['initiatives']
+    response = get_call(apiurl, 'initiatives')
+    #json_response = json.loads(response)
+    goals = response
 
     solution_goals = {}
     for goal in goals:
+        d_minus = 0
         is_solution = False
-        properties = {'name': goal['name'], 'status': goal['status']}
+        properties = {'name': goal['name'],
+                      'launch_confidence': '',
+                      'pillar': 'Other'
+                      }
 
         if 'custom_fields' in goal:
-            custom_fields = goal['custom_fields']
-            for custom_field in custom_fields:
-                if custom_field['key'] == 'primary_resource_domain':
-                    if custom_field['value'] == 'Solutions':
+            for custom_field in goal['custom_fields']:
+                if custom_field['key'] == 'market':
+                    if custom_field['value'] == 'BPLM' or custom_field['value'] == 'Both':
                         is_solution = True
 
                 if custom_field['key'] == 'now_next_later':
-                    properties['priority'] = custom_field['value']
+                    if custom_field['value'] == 'Now':
+                        properties['launch_confidence'] = 'Confirmed'
+                    elif custom_field['value'] == 'Next':
+                        properties['launch_confidence'] = 'Estimated'
+                    else:
+                        properties['launch_confidence'] = 'Projected'
+
+                if custom_field['key'] == 'pillar':
+                    print(goal)
+                    print(len(custom_field['value']))
+                    if len(custom_field['value']) != 0:
+                        properties['pillar'] = custom_field['value'][0]
 
                 if custom_field['key'] == 'idbs_rice_score':
-                    properties['rice'] = custom_field['value']
+                    d_minus = custom_field['value']
 
-                if custom_field['key'] == 'technical_or_solution_domain':
-                    properties['technical'] = custom_field['value']
-
-                if custom_field['key'] == 'technical_or_solution_domain':
-                    properties['pillar'] = custom_field['value']
+        if goal['status'] == 'finished_[closed]' or goal['status'] == 'rejected':
+            properties['status'] = goal['status']
+            properties['released'] = True
+            properties['launch_confidence'] = 'Projected'
+        elif goal['status'] == 'in_progress_(resourced)_[implement]' or goal['status'] == 'in_progress_(un-resourced)_[implement]' or goal['status'] == 'on-hold':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            temp_date = datetime.date.today()
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        elif goal['status'] == 'selected_for_roadmap':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            d_minus = 500 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=d_minus)
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        elif goal['status'] == 'poc_[measure/analyze]':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            d_minus = 1000 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=d_minus)
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        else:
+            properties['status'] = goal['status']
+            properties['released'] = True
+            properties['launch_confidence'] = 'Projected'
 
         if is_solution is True:
             solution_goals[goal['id']] = properties
@@ -176,10 +218,10 @@ def poll_aha_goals():
 def poll_aha_releases():
     all_apiurl = '/api/v1/products/6979594302160412111/releases'
 
-    all_response = get_call(all_apiurl)
-    all_json_response = json.loads(all_response)
+    all_response = get_call(all_apiurl, 'releases')
+    #all_json_response = json.loads(all_response)
 
-    all_releases = all_json_response['releases']
+    all_releases = all_response # all_json_response['releases']
 
     releases = {}
 
@@ -188,16 +230,17 @@ def poll_aha_releases():
         release_id = all_release['id']
         apiurl = '/api/v1/releases/{}'.format(release_id)
 
-        response = get_call(apiurl)
-        json_response = json.loads(response)
-        temp_release = json_response['release']
+        response = get_call(apiurl, 'release')
+        #json_response = json.loads(response)
+        temp_release = response # json_response['release']
         print(temp_release)
+        # print(temp_release)
 
         properties = {'name': temp_release['name'],
                       'external_release_date': temp_release['external_release_date'],
                       'released': temp_release['released'],
                       'launch_confidence': '',
-                      'pillar': ''
+                      'pillar': 'Other'
                       }
 
         if 'custom_fields' in temp_release:
@@ -232,40 +275,51 @@ def update_confulence(image_file):
     resurl = baseurl + api_url
     get_response = requests.post(resurl, auth=auth, headers=headers, files={'file': image_file})
 
-    print(get_response)
+    #print(get_response)
 
     return get_response
 
 if __name__ == "__main__":
-    # all_solutions_work = poll_aha_releases()
-    # workflows_pillar = {}
-    # insights_pillar = {}
-    # integrations_pillar = {}
-    # other_pillar = {}
-    #
+    all_solutions_work = poll_aha_releases()
+    # all_solutions_work = poll_aha_goals()
+    workflows_pillar = {}
+    insights_pillar = {}
+    integrations_pillar = {}
+    other_pillar = {}
+
     # print(all_solutions_work)
-    # for x, y in all_solutions_work.items():
-    #
-    #     if y['pillar'] == 'Workflows' and y['released'] is False:
-    #         workflows_pillar[x] = y
-    #     if y['pillar'] == 'Integrations' and y['released'] is False:
-    #         insights_pillar[x] = y
-    #     if y['pillar'] == 'Insights' and y['released'] is False:
-    #         integrations_pillar[x] = y
-    #     if y['pillar'] == 'Other' and y['released'] is False:
-    #         other_pillar[x] = y
-    #
-    # image = Image.open('roadmap.png')
-    # back_image = image.copy()
-    #
-    # print(workflows_pillar)
-    # map_generate(workflows_pillar, 'workflow_co-ordinates.json', 'w', back_image)
-    # map_generate(insights_pillar, 'workflow_co-ordinates.json', 'i', back_image)
-    # map_generate(integrations_pillar, 'workflow_co-ordinates.json', 'd', back_image)
-    # map_generate(other_pillar, 'workflow_co-ordinates.json', 'c', back_image)
+    for x, y in all_solutions_work.items():
 
-    # back_image.save('roadmap_output.png')
+        if y['pillar'] == 'Workflows' and y['released'] is False:
+            workflows_pillar[x] = y
+        if y['pillar'] == 'Integrations' and y['released'] is False:
+            insights_pillar[x] = y
+        if y['pillar'] == 'Insights' and y['released'] is False:
+            integrations_pillar[x] = y
+        if y['pillar'] == 'Other' and y['released'] is False:
+            other_pillar[x] = y
 
-    update_confulence('roadmap_output.png')
+    image = Image.open('roadmap.png')
+    back_image = image.copy()
 
-    # back_image.show()
+    #print(workflows_pillar)
+    if len(workflows_pillar) > 0:
+        map_generate(workflows_pillar, 'workflow_co-ordinates.json', 'w', back_image)
+
+    #print(insights_pillar)
+    if len(insights_pillar) > 0:
+        map_generate(insights_pillar, 'workflow_co-ordinates.json', 'i', back_image)
+
+    #print(integrations_pillar)
+    if len(integrations_pillar) > 0:
+        map_generate(integrations_pillar, 'workflow_co-ordinates.json', 'd', back_image)
+
+    #print(other_pillar)
+    if len(other_pillar) > 0:
+        map_generate(other_pillar, 'workflow_co-ordinates.json', 'c', back_image)
+
+    back_image.save('roadmap_output.png')
+
+    # update_confulence('roadmap_output.png')
+
+    back_image.show()
