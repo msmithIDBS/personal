@@ -5,7 +5,7 @@ from datetime import datetime
 import datetime
 import textwrap
 from requests.auth import HTTPBasicAuth
-
+import mimetypes
 
 def get_call(api_url, return_name):
     baseurl = 'https://idbs-hub.aha.io'
@@ -64,7 +64,7 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
         annotation_t = initiatives[rel_name]['launch_confidence']
         annotation = initiative_name
 
-        if type == 'w':
+        if type == 'i':
             image_x = annotation_x - 17
             image_y = annotation_y - 17
 
@@ -89,7 +89,7 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
                 pin_image = Image.open('roadmap_pin_d3.png')
             else:
                 pin_image = Image.open('roadmap_pin_d3.png')
-        elif type == 'i':
+        elif type == 'w':
             image_x = annotation_x - 17
             image_y = annotation_y - 17
 
@@ -120,13 +120,17 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
         # w, h = draw.textsize(annotation)
         w, h = font.getsize(annotation)
 
-        if type == 'w':
-            text_x = annotation_x - 135
+        if type == 'i':
+            if w > 188:
+                text_x = annotation_x - 190
+            else:
+                text_x = annotation_x - w - 30
+
             text_y = annotation_y - 8
         elif type == 'd':
-            text_x = annotation_x + 20
-            text_y = annotation_y + 5
-        elif type == 'i':
+            text_x = annotation_x + 25
+            text_y = annotation_y - 5
+        elif type == 'w':
             text_x = annotation_x
             text_y = annotation_y + 20
         elif type == 'c':
@@ -134,7 +138,7 @@ def map_generate(initiative_dictionary, co_ordinates_file, type, back_image):
             text_y = annotation_y + 25
 
         # draw text
-        lines = textwrap.wrap(annotation, width=20)
+        lines = textwrap.wrap(annotation, width=26)
         for line in lines:
             line_width, line_height = font.getsize(line)
             draw.text((text_x, text_y), line, font=font, fill='#FFFFFF')
@@ -176,34 +180,51 @@ def poll_aha_goals():
                         properties['launch_confidence'] = 'Projected'
 
                 if custom_field['key'] == 'pillar':
-                    print(goal)
-                    print(len(custom_field['value']))
                     if len(custom_field['value']) != 0:
                         properties['pillar'] = custom_field['value'][0]
 
                 if custom_field['key'] == 'idbs_rice_score':
-                    d_minus = custom_field['value']
+                    d_minus = float(custom_field['value'])
 
-        if goal['status'] == 'finished_[closed]' or goal['status'] == 'rejected':
+        if goal['status'] == 'finished' or goal['status'] == 'rejected' or goal['status'] == 'ideas_backlog':
             properties['status'] = goal['status']
             properties['released'] = True
             properties['launch_confidence'] = 'Projected'
-        elif goal['status'] == 'in_progress_(resourced)_[implement]' or goal['status'] == 'in_progress_(un-resourced)_[implement]' or goal['status'] == 'on-hold':
+        elif goal['status'] == 'complete':
             properties['status'] = goal['status']
             properties['released'] = False
-            temp_date = datetime.date.today()
+            ds_minus = -500 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
             properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
-        elif goal['status'] == 'selected_for_roadmap':
+        elif goal['status'] == 'in_progress_(resourced)' or goal['status'] == 'in_progress_(un-resourced)':
             properties['status'] = goal['status']
             properties['released'] = False
-            d_minus = 500 - d_minus
-            temp_date = datetime.date.today() + datetime.timedelta(days=d_minus)
+            ds_minus = 0 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
             properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
-        elif goal['status'] == 'poc_[measure/analyze]':
+        elif goal['status'] == 'roadmap_backlog':
             properties['status'] = goal['status']
             properties['released'] = False
-            d_minus = 1000 - d_minus
-            temp_date = datetime.date.today() + datetime.timedelta(days=d_minus)
+            ds_minus = 500 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        elif goal['status'] == 'discovery_execution':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            ds_minus = 1000 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        elif goal['status'] == 'discovery_backlog':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            ds_minus = 1500 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
+            properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
+        elif goal['status'] == 'idea scoring':
+            properties['status'] = goal['status']
+            properties['released'] = False
+            ds_minus = 2000 - d_minus
+            temp_date = datetime.date.today() + datetime.timedelta(days=ds_minus)
             properties['external_release_date'] = temp_date.strftime("%Y-%m-%d")
         else:
             properties['status'] = goal['status']
@@ -233,8 +254,6 @@ def poll_aha_releases():
         response = get_call(apiurl, 'release')
         #json_response = json.loads(response)
         temp_release = response # json_response['release']
-        print(temp_release)
-        # print(temp_release)
 
         properties = {'name': temp_release['name'],
                       'external_release_date': temp_release['external_release_date'],
@@ -262,26 +281,38 @@ def poll_aha_releases():
 
 def update_confulence(image_file):
     baseurl = 'https://idbs-hub.atlassian.net'
-    api_url = '/wiki/rest/api/content/3018391709/child/attachment/att3427172472/data'
+    api_url = '/wiki/rest/api/content/3018391709/child/attachment/att3468787746/data'
+    # api_url = '/wiki/rest/api/content/3018391709/child/attachment'
     apikey = 'BzAruZiuJGgiC2prOI6CA93F'
     auth = HTTPBasicAuth('msmith@idbs.com', 'BzAruZiuJGgiC2prOI6CA93F')
     page_id = '3018391709'
     attachment_id = 'att3427172472'
 
     # apikey = '07a429f2762cf51a4a027024bda48652a4554ef856335a58629ad5d99653ef87'
-    headers = {'Accept': 'application/json'} #, 'Authorization': "Bearer {}".format(apikey)}
-    data = {'file': image_file}
+    headers = {'X-Atlassian-Token': 'no-check'}  # , 'Authorization': "Bearer {}".format(apikey)}
+    # data = {'file': image_file}
+    file = 'roadmap_output.jpg'
+
+    # determine content-type
+    content_type, encoding = mimetypes.guess_type(file)
+    if content_type is None:
+        content_type = 'image/jpeg'
+
+    # provide content-type explicitly
+    files = {'file': (file, open(file, 'rb'), content_type)}
 
     resurl = baseurl + api_url
-    get_response = requests.post(resurl, auth=auth, headers=headers, files={'file': image_file})
+    post_response = requests.post(resurl, auth=auth, headers=headers, files=files)
+    # get_response = requests.get(resurl, auth=auth, headers=headers)
 
-    #print(get_response)
+    print(post_response)
+    # print(get_response.content)
 
-    return get_response
+    return post_response
 
 if __name__ == "__main__":
-    all_solutions_work = poll_aha_releases()
-    # all_solutions_work = poll_aha_goals()
+    # all_solutions_work = poll_aha_releases()
+    all_solutions_work = poll_aha_goals()
     workflows_pillar = {}
     insights_pillar = {}
     integrations_pillar = {}
@@ -319,7 +350,9 @@ if __name__ == "__main__":
         map_generate(other_pillar, 'workflow_co-ordinates.json', 'c', back_image)
 
     back_image.save('roadmap_output.png')
+    jpeg_image = back_image.convert('RGB')
+    jpeg_image.save('roadmap_output.jpg')
 
-    # update_confulence('roadmap_output.png')
+    update_confulence('roadmap_output.jpg')
 
     back_image.show()
